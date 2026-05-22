@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Registro de Trator</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #f8f9fa;
+    }
+
+    input,
+    button {
+      margin: 5px 0;
+      padding: 8px;
+      width: 100%;
+      font-size: 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      background: white;
+    }
+
+    th,
+    td {
+      border: 1px solid #000;
+      padding: 6px;
+      text-align: center;
+    }
+
+    button {
+      cursor: pointer;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 5px;
+    }
+
+    button:hover {
+      background: #0056b3;
+    }
+
+    #mensagem {
+      margin-top: 15px;
+      padding: 10px;
+      border-radius: 5px;
+      font-weight: bold;
+      text-align: center;
+      display: none;
+    }
+
+    .sucesso {
+      background-color: #d4edda;
+      color: #155724;
+    }
+
+    .erro {
+      background-color: #f8d7da;
+      color: #721c24;
+    }
+
+    .botoes-acoes {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .btn-apagar {
+      background: #dc3545;
+    }
+
+    .btn-sync {
+      background: #28a745;
+    }
+  </style>
+</head>
+
+<body>
+
+<h2>🚜 Registro de Trator</h2>
+
+<label>Data:</label>
+<input type="date" id="data">
+
+<label>Operador:</label>
+<input type="text" id="operador">
+
+<label>Associado:</label>
+<input type="text" id="associado">
+
+<label>Modelo:</label>
+<input type="text" id="modelo">
+
+<label>Atividade:</label>
+<input type="text" id="atividade">
+
+<label>Horímetro Inicial:</label>
+<input type="number" id="horimetroInicial">
+
+<label>Horímetro Final:</label>
+<input type="number" id="horimetroFinal">
+
+<div class="botoes-acoes">
+
+  <button onclick="registrar()">Registrar</button>
+  <button onclick="exportarCSV()">CSV</button>
+
+  <button id="btnSync" class="btn-sync" onclick="sincronizarPendentes()" disabled>
+    🔄 Sincronizar
+  </button>
+
+  <button class="btn-apagar" onclick="limparTodos()">Apagar Tudo</button>
+
+</div>
+
+<div id="mensagem"></div>
+
+<table id="tabela">
+  <thead>
+    <tr>
+      <th>Data</th>
+      <th>Operador</th>
+      <th>Associado</th>
+      <th>Modelo</th>
+      <th>Atividade</th>
+      <th>Inicial</th>
+      <th>Final</th>
+      <th>Horas</th>
+      <th>Ações</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script>
+
+const URL_SCRIPT =
+"https://script.google.com/macros/s/AKfycbxmjIPO_4f0iCEEhsgonCRtrSMRcCt_Ac7cYVe--pTH9rpfl0woLn6fbim-tk7ln_C0lw/exec";
+
+let registros = JSON.parse(localStorage.getItem("registrosTrator")) || [];
+let registrosPendentes = JSON.parse(localStorage.getItem("registrosPendentes")) || [];
+
+function salvarLocal() {
+  localStorage.setItem("registrosTrator", JSON.stringify(registros));
+}
+
+function salvarPendentes() {
+  localStorage.setItem("registrosPendentes", JSON.stringify(registrosPendentes));
+}
+
+function mostrarMensagem(texto, tipo) {
+  const msg = document.getElementById("mensagem");
+  msg.textContent = texto;
+  msg.className = tipo;
+  msg.style.display = "block";
+  setTimeout(() => msg.style.display = "none", 3000);
+}
+
+function calcularHoras(i, f) {
+  return f - i < 0 ? 0 : (f - i).toFixed(2);
+}
+
+/* ===== ENVIO CORRIGIDO ===== */
+async function enviarParaGoogleSheets(dados) {
+
+  try {
+
+    const resposta = await fetch(URL_SCRIPT, {
+      method: "POST",
+      body: JSON.stringify(dados)
+    });
+
+    if (!resposta.ok) throw new Error("erro");
+
+    mostrarMensagem("✅ Enviado!", "sucesso");
+
+  } catch (e) {
+
+    registrosPendentes.push(dados);
+    salvarPendentes();
+
+    atualizarBotaoSync();
+
+    mostrarMensagem("📴 Salvo offline", "erro");
+  }
+}
+
+/* ===== SINCRONIZAÇÃO CORRIGIDA ===== */
+async function sincronizarPendentes() {
+
+  if (registrosPendentes.length === 0) {
+    mostrarMensagem("Nada pendente", "sucesso");
+    return;
+  }
+
+  if (!navigator.onLine) {
+    mostrarMensagem("Sem internet", "erro");
+    return;
+  }
+
+  let enviados = [];
+
+  for (let r of registrosPendentes) {
+
+    try {
+
+      const res = await fetch(URL_SCRIPT, {
+        method: "POST",
+        body: JSON.stringify(r)
+      });
+
+      if (res.ok) enviados.push(r);
+
+    } catch (e) {}
+  }
+
+  registrosPendentes = registrosPendentes.filter(r => !enviados.includes(r));
+  salvarPendentes();
+
+  atualizarBotaoSync();
+
+  mostrarMensagem(`${enviados.length} sincronizados`, "sucesso");
+}
+
+function atualizarBotaoSync() {
+  const btn = document.getElementById("btnSync");
+
+  if (registrosPendentes.length > 0) {
+    btn.disabled = false;
+    btn.innerText = `🔄 (${registrosPendentes.length})`;
+  } else {
+    btn.disabled = true;
+    btn.innerText = "OK";
+  }
+}
+
+/* ===== REGISTRAR ===== */
+function registrar() {
+
+  let dados = {
+    data: data.value,
+    operador: operador.value,
+    associado: associado.value,
+    modelo: modelo.value,
+    atividade: atividade.value,
+    horimetroInicial: parseFloat(horimetroInicial.value),
+    horimetroFinal: parseFloat(horimetroFinal.value)
+  };
+
+  if (!dados.data || !dados.operador || isNaN(dados.horimetroInicial) || isNaN(dados.horimetroFinal)) {
+    return mostrarMensagem("Preencha tudo", "erro");
+  }
+
+  dados.horasTrabalhadas = calcularHoras(dados.horimetroInicial, dados.horimetroFinal);
+
+  registros.push(dados);
+  salvarLocal();
+  atualizarTabela();
+
+  if (navigator.onLine) {
+    enviarParaGoogleSheets(dados);
+  } else {
+    registrosPendentes.push(dados);
+    salvarPendentes();
+  }
+
+}
+
+/* ===== TABELA ===== */
+function atualizarTabela() {
+
+  let tbody = document.querySelector("#tabela tbody");
+  tbody.innerHTML = "";
+
+  registros.forEach((r, i) => {
+
+    tbody.innerHTML += `
+      <tr>
+        <td>${r.data}</td>
+        <td>${r.operador}</td>
+        <td>${r.associado}</td>
+        <td>${r.modelo}</td>
+        <td>${r.atividade}</td>
+        <td>${r.horimetroInicial}</td>
+        <td>${r.horimetroFinal}</td>
+        <td>${r.horasTrabalhadas}</td>
+        <td><button onclick="apagar(${i})">🗑️</button></td>
+      </tr>
+    `;
+  });
+}
+
+function apagar(i) {
+  registros.splice(i,1);
+  salvarLocal();
+  atualizarTabela();
+}
+
+function limparTodos() {
+  registros = [];
+  salvarLocal();
+  atualizarTabela();
+}
+
+function exportarCSV() {
+
+  let csv = "Data,Operador,Associado,Modelo,Atividade,Inicial,Final,Horas\n";
+
+  registros.forEach(r => {
+    csv += `${r.data},${r.operador},${r.associado},${r.modelo},${r.atividade},${r.horimetroInicial},${r.horimetroFinal},${r.horasTrabalhadas}\n`;
+  });
+
+  let blob = new Blob([csv], { type: "text/csv" });
+  let a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "registros.csv";
+  a.click();
+}
+
+window.addEventListener("online", sincronizarPendentes);
+
+atualizarTabela();
+atualizarBotaoSync();
+
+</script>
+
+</body>
+</html>
