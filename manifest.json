@@ -1,6 +1,6 @@
 
 {
-  "name": "Registro de Trator",
+  "name": "Registro do Trator",
   "short_name": "APPMCV",
   "start_url": "./index.html",
   "scope": "./",
