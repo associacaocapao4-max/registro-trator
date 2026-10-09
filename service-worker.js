@@ -1,9 +1,13 @@
-const cacheName = "registro-trator-v1";
+
+const cacheName = "registro-trator-v2";
+
 const arquivosParaCache = [
   "./",
-  "./registro_trator.html",
+  "./index.html",
   "./manifest.json",
-  "./icone.png"
+  "./APPMCV.png",
+  "./APPMCV_192x192.png",
+  "./APPMCV_512x512.png"
 ];
 
 self.addEventListener("install", event => {
@@ -12,13 +16,31 @@ self.addEventListener("install", event => {
       return cache.addAll(arquivosParaCache);
     })
   );
+
+  self.skipWaiting();
   console.log("✅ Service Worker instalado");
 });
 
+self.addEventListener("activate", event => {
+  event.waitUntil(
+    caches.keys().then(chaves =>
+      Promise.all(
+        chaves
+          .filter(chave =>
+            chave.startsWith("registro-trator-") &&
+            chave !== cacheName
+          )
+          .map(chave => caches.delete(chave))
+      )
+    ).then(() => self.clients.claim())
+  );
+});
+
 self.addEventListener("fetch", event => {
+  if (event.request.method !== "GET") return;
+
   event.respondWith(
     caches.match(event.request).then(response => {
-      // Se tiver no cache, usa; senão, busca na rede
       return response || fetch(event.request);
     })
   );
