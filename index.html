@@ -378,16 +378,15 @@
       const tipoSelecionado = document.getElementById("tipo").value;
 
       if (tipoSelecionado === "Socio") {
-        valorHora = 160;
+        valorHora = 200;
       }
 
       if (tipoSelecionado === "Nao Socio") {
-        valorHora = 180;
+        valorHora = 260;
       }
 
-      // Nova categoria: Diretoria, com valor de R$ 100,00 por hora.
       if (tipoSelecionado === "Diretoria") {
-        valorHora = 100;
+        valorHora = 170;
       }
 
       let valorCalculado = horasTrabalhadas * valorHora;

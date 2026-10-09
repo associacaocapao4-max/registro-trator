@@ -1,18 +1,20 @@
+
 {
   "name": "Registro de Trator",
-  "short_name": "Trator",
-  "start_url": "./registro_trator.html",
+  "short_name": "APPMCV",
+  "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#f8f9fa",
   "theme_color": "#007bff",
   "icons": [
     {
-      "src": "icone.png",
+      "src": "./APPMCV.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "icone.png",
+      "src": "./APPMCV.png",
       "sizes": "512x512",
       "type": "image/png"
     }
