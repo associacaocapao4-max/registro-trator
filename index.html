@@ -91,12 +91,20 @@
       transform: scale(1.02);
     }
 
-    button:not(.btn-apagar):not(.btn-sync) {
+    button:not(.btn-apagar):not(.btn-sync):not(.btn-csv) {
       background: #2563eb;
     }
 
-    button:not(.btn-apagar):not(.btn-sync):hover {
+    button:not(.btn-apagar):not(.btn-sync):not(.btn-csv):hover {
       background: #1d4ed8;
+    }
+
+    .btn-csv {
+      background: #f97316;
+    }
+
+    .btn-csv:hover {
+      background: #ea580c;
     }
 
     .btn-sync {
@@ -240,7 +248,7 @@
 
     <div class="botoes-acoes">
       <button onclick="registrar()">Registrar</button>
-      <button onclick="exportarCSV()">CSV</button>
+      <button class="btn-csv" onclick="exportarCSV()">CSV</button>
       <button id="btnSync" class="btn-sync" onclick="sincronizarPendentes()" disabled>
         🔄 Sincronizar
       </button>
