@@ -330,8 +330,14 @@
     }
 
     let sincronizacaoEmAndamento = false;
+    let totalEnvioAtual = 0;
+    let enviadosEnvioAtual = 0;
     const TAMANHO_LOTE = 10;
-    const INTERVALO_ENVIO_MS = 350;
+    // O próprio tempo de resposta do servidor já controla o ritmo.
+    // Uma pausa curta evita rajadas sem atrasar desnecessariamente a fila.
+    const INTERVALO_ENVIO_MS = 100;
+    const TEMPO_LIMITE_ENVIO_MS = 20000;
+    const MAX_TENTATIVAS_ENVIO = 3;
 
     function aguardar(ms) {
       return new Promise(resolve => setTimeout(resolve, ms));
@@ -397,6 +403,48 @@
       }
     }
 
+    async function enviarPendenteComSeguranca(item) {
+      let ultimoErro = null;
+
+      for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_ENVIO; tentativa++) {
+        if (!navigator.onLine) {
+          throw new Error("Sem internet. Os apontamentos continuam salvos no aparelho.");
+        }
+
+        const controlador = new AbortController();
+        const limite = setTimeout(() => controlador.abort(), TEMPO_LIMITE_ENVIO_MS);
+
+        try {
+          const resposta = await fetch(URL_SCRIPT, {
+            method: "POST",
+            body: JSON.stringify(item),
+            signal: controlador.signal
+          });
+
+          if (!resposta.ok) throw new Error("Falha HTTP " + resposta.status);
+          const retorno = await resposta.json();
+          if (!retorno || retorno.sucesso !== true) {
+            throw new Error((retorno && retorno.erro) || "Servidor não confirmou o recebimento");
+          }
+          return retorno;
+        } catch (erro) {
+          ultimoErro = erro.name === "AbortError"
+            ? new Error("Tempo limite de 20 segundos excedido")
+            : erro;
+
+          // O mesmo ID é usado em todas as tentativas. Se o servidor gravou,
+          // mas a resposta se perdeu, a próxima tentativa não cria duplicata.
+          if (tentativa < MAX_TENTATIVAS_ENVIO) {
+            await aguardar(tentativa * 1000);
+          }
+        } finally {
+          clearTimeout(limite);
+        }
+      }
+
+      throw ultimoErro || new Error("Não foi possível confirmar o envio");
+    }
+
     async function sincronizarPendentes() {
       if (sincronizacaoEmAndamento) return;
 
@@ -407,73 +455,73 @@
       }
 
       if (!navigator.onLine) {
-        mostrarMensagem("Sem internet", "erro");
+        mostrarMensagem("Sem internet — apontamentos mantidos no aparelho", "erro");
         return;
       }
 
       sincronizacaoEmAndamento = true;
+      totalEnvioAtual = registrosPendentes.length;
+      enviadosEnvioAtual = 0;
       const btn = document.getElementById("btnSync");
-      btn.disabled = true;
-      btn.innerText = "⏳ Enviando...";
-      let enviadosNestaRodada = 0;
-      let falhou = false;
+      atualizarBotaoSync();
+      let erroEnvio = null;
 
       try {
-        // Trabalha em pequenos lotes e confirma/salva cada item individualmente.
-        // Se a conexão cair, somente o item não confirmado e os seguintes ficam na fila.
+        // Envio sequencial: preserva a segurança da gravação no Apps Script.
+        // Cada registro só sai da fila depois da confirmação do servidor.
         while (registrosPendentes.length > 0) {
           if (!navigator.onLine) {
-            falhou = true;
+            erroEnvio = new Error("Conexão perdida");
             break;
           }
 
+          // Organiza a fila em lotes de até 10, enviados em sequência segura.
           const lote = registrosPendentes.slice(0, TAMANHO_LOTE);
           for (const item of lote) {
             if (!navigator.onLine) {
-              falhou = true;
+              erroEnvio = new Error("Conexão perdida");
               break;
             }
-            try {
-              if (!item.id) item.id = gerarIdRegistro();
-              const res = await fetch(URL_SCRIPT, {
-                method: "POST",
-                body: JSON.stringify(item)
-              });
-              if (!res.ok) throw new Error("Falha HTTP no envio");
-              const retorno = await res.json();
-              if (!retorno || retorno.sucesso !== true) {
-                throw new Error((retorno && retorno.erro) || "Servidor não confirmou o recebimento");
-              }
+            if (!item.id) item.id = gerarIdRegistro();
 
-              // Remove e persiste imediatamente após a confirmação do servidor.
+            try {
+              await enviarPendenteComSeguranca(item);
+
+              // Remove somente o item confirmado, sem apagar os demais pendentes.
               registrosPendentes = registrosPendentes.filter(r => r.id !== item.id);
               salvarPendentes();
+              enviadosEnvioAtual++;
+              totalEnvioAtual = Math.max(totalEnvioAtual, enviadosEnvioAtual + registrosPendentes.length);
               atualizarBotaoSync();
-              enviadosNestaRodada++;
-              await aguardar(INTERVALO_ENVIO_MS);
-            } catch (e) {
-              falhou = true;
+
+              if (INTERVALO_ENVIO_MS > 0) await aguardar(INTERVALO_ENVIO_MS);
+            } catch (erro) {
+              erroEnvio = erro;
               break;
             }
           }
-          if (falhou) break;
+          if (erroEnvio) break;
         }
       } finally {
         sincronizacaoEmAndamento = false;
         atualizarBotaoSync();
       }
 
-      if (falhou || registrosPendentes.length > 0) {
-        mostrarMensagem(`${enviadosNestaRodada} enviados; ${registrosPendentes.length} ainda pendentes`, "erro");
+      if (erroEnvio || registrosPendentes.length > 0) {
+        const detalhe = erroEnvio ? ` (${erroEnvio.message})` : "";
+        mostrarMensagem(`${enviadosEnvioAtual} enviados; ${registrosPendentes.length} ainda pendentes${detalhe}. Toque para continuar.`, "erro");
       } else {
-        mostrarMensagem(`${enviadosNestaRodada} sincronizados com sucesso`, "sucesso");
+        mostrarMensagem(`${enviadosEnvioAtual} sincronizados com sucesso`, "sucesso");
       }
     }
 
     function atualizarBotaoSync() {
       const btn = document.getElementById("btnSync");
 
-      if (registrosPendentes.length > 0) {
+      if (sincronizacaoEmAndamento) {
+        btn.disabled = true;
+        btn.innerText = `⏳ Enviando ${enviadosEnvioAtual}/${totalEnvioAtual} — ${registrosPendentes.length} restantes`;
+      } else if (registrosPendentes.length > 0) {
         btn.disabled = false;
         btn.innerText = `📤 ENVIAR PENDENTES (${registrosPendentes.length})`;
       } else {
@@ -603,9 +651,23 @@
       window.print();
     }
 
-    // Atualiza o indicador da fila ao abrir o aplicativo.
+    // Atualiza a fila ao abrir. Se houver pendências, retoma automaticamente
+    // após a abertura/atualização da página, sem exigir novo clique.
     atualizarBotaoSync();
     atualizarTabela();
+
+    window.addEventListener("online", () => {
+      if (registrosPendentes.length > 0 && !sincronizacaoEmAndamento) {
+        mostrarMensagem("Internet restabelecida — retomando envio", "sucesso");
+        sincronizarPendentes();
+      }
+    });
+
+    setTimeout(() => {
+      if (navigator.onLine && registrosPendentes.length > 0) {
+        sincronizarPendentes();
+      }
+    }, 1200);
 
   </script>
   <script>
