@@ -1,0 +1,21 @@
+{
+  "id": "./",
+  "name": "Registro do Trator",
+  "short_name": "Trator",
+  "description": "Registro e controle de serviços de trator",
+  "lang": "pt-BR",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#eef2f3",
+  "theme_color": "#1f3c88",
+  "icons": [
+    {
+      "src": "./icone-app.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
