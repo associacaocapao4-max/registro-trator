@@ -96,19 +96,19 @@
       transform: scale(1.02);
     }
 
-    button:not(.btn-apagar):not(.btn-sync):not(.btn-csv) {
+    button:not(.btn-apagar):not(.btn-sync):not(.btn-pdf) {
       background: #2563eb;
     }
 
-    button:not(.btn-apagar):not(.btn-sync):not(.btn-csv):hover {
+    button:not(.btn-apagar):not(.btn-sync):not(.btn-pdf):hover {
       background: #1d4ed8;
     }
 
-    .btn-csv {
+    .btn-pdf {
       background: #f97316;
     }
 
-    .btn-csv:hover {
+    .btn-pdf:hover {
       background: #ea580c;
     }
 
@@ -179,6 +179,21 @@
       padding: 8px 12px;
       border-radius: 8px;
       background: #ef4444;
+    }
+
+    @media print {
+      @page { size: landscape; margin: 12mm; }
+      body { background: #fff !important; padding: 0; color: #000; }
+      .topo { margin-bottom: 12px; }
+      .topo img { width: 75px; box-shadow: none; padding: 0; }
+      .topo h2 { color: #000; font-size: 20px; }
+      .formulario, #mensagem, .botoes-acoes, button { display: none !important; }
+      #tabela { width: 100%; border-collapse: collapse; font-size: 9px; }
+      #tabela thead { display: table-header-group; }
+      #tabela tr { break-inside: avoid; }
+      #tabela th, #tabela td { border: 1px solid #777; padding: 5px 4px; color: #000; }
+      #tabela th { background: #e5e7eb !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      #tabela th:last-child, #tabela td:last-child { display: none !important; }
     }
 
     @media (max-width: 768px) {
@@ -253,7 +268,7 @@
 
     <div class="botoes-acoes">
       <button onclick="registrar()">Registrar</button>
-      <button class="btn-csv" onclick="exportarCSV()">CSV</button>
+      <button class="btn-pdf" onclick="exportarPDF()">EXPORTAR PDF</button>
       <button id="btnSync" class="btn-sync" onclick="sincronizarPendentes()" disabled>
         🔄 Sincronizar
       </button>
@@ -541,7 +556,7 @@
       registros.forEach((r, i) => {
         tbody.innerHTML += `
           <tr>
-            <td>${r.data}</td>
+            <td>${formatarData(r.data)}</td>
             <td>${r.operador}</td>
             <td>${r.associado}</td>
             <td>${r.tipo}</td>
@@ -571,48 +586,21 @@
       atualizarTabela();
     }
 
-    function exportarCSV() {
-      // Ponto e vírgula separa as colunas corretamente no Excel em português.
-      function campoCSV(valor) {
-        let texto = String(valor ?? "");
-        if (/^[+-]?\d+\.\d+$/.test(texto)) {
-          texto = texto.replace(".", ",");
-        }
-        return '"' + texto.replace(/"/g, '""') + '"';
+    // Converte a data ISO (AAAA-MM-DD) para DD-MM-AAAA apenas na tela/PDF.
+    // O valor original continua intacto para o Google Sheets e para os filtros.
+    function formatarData(data) {
+      if (!data) return "";
+      const partes = String(data).split("-");
+      if (partes.length !== 3) return data;
+      return `${partes[2]}-${partes[1]}-${partes[0]}`;
+    }
+
+    // Abre a impressão do navegador; escolha "Salvar como PDF" no destino.
+    function exportarPDF() {
+      if (!registros.length) {
+        return mostrarMensagem("Não há apontamentos para exportar.", "erro");
       }
-
-      const colunas = [
-        "Data", "Operador", "Associado", "Tipo", "Modelo",
-        "Atividade", "Inicial", "Final", "Horas", "Valor"
-      ];
-
-      let linhas = [colunas.map(campoCSV).join(";")];
-
-      registros.forEach(r => {
-        linhas.push([
-          r.data,
-          r.operador,
-          r.associado,
-          r.tipo,
-          r.modelo,
-          r.atividade,
-          r.horimetroInicial,
-          r.horimetroFinal,
-          r.horasTrabalhadas,
-          r.valor
-        ].map(campoCSV).join(";"));
-      });
-
-      const csv = "\uFEFF" + linhas.join("\r\n");
-      const blob = new Blob([csv], {
-        type: "text/csv;charset=utf-8;"
-      });
-
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "registros.csv";
-      a.click();
-      URL.revokeObjectURL(a.href)
+      window.print();
     }
 
     // Atualiza o indicador da fila ao abrir o aplicativo.
