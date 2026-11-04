@@ -292,6 +292,36 @@
     let registrosPendentes =
       JSON.parse(localStorage.getItem("registrosPendentes")) || [];
 
+    // Cada apontamento recebe um identificador permanente. O mesmo ID é
+    // reutilizado em todas as tentativas, permitindo ao servidor bloquear duplicatas.
+    function gerarIdRegistro() {
+      if (window.crypto && typeof window.crypto.randomUUID === "function") {
+        return window.crypto.randomUUID();
+      }
+      return "reg-" + Date.now().toString(36) + "-" +
+        Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    }
+
+    // Migra apontamentos offline antigos que ainda não tinham identificador.
+    let filaFoiAtualizada = false;
+    registrosPendentes.forEach(r => {
+      if (!r.id) {
+        r.id = gerarIdRegistro();
+        filaFoiAtualizada = true;
+      }
+    });
+    if (filaFoiAtualizada) {
+      localStorage.setItem("registrosPendentes", JSON.stringify(registrosPendentes));
+    }
+
+    let sincronizacaoEmAndamento = false;
+    const TAMANHO_LOTE = 4;
+    const INTERVALO_ENVIO_MS = 350;
+
+    function aguardar(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
     function salvarLocal() {
       localStorage.setItem(
         "registrosTrator",
@@ -321,27 +351,43 @@
       return f - i < 0 ? 0 : (f - i).toFixed(2);
     }
 
+    function adicionarPendente(dados) {
+      if (!dados.id) dados.id = gerarIdRegistro();
+      // Evita inserir duas vezes na fila local o mesmo apontamento.
+      if (!registrosPendentes.some(r => r.id === dados.id)) {
+        registrosPendentes.push(dados);
+      }
+      salvarPendentes();
+      atualizarBotaoSync();
+    }
+
     async function enviarParaGoogleSheets(dados) {
+      if (!dados.id) dados.id = gerarIdRegistro();
       try {
         const resposta = await fetch(URL_SCRIPT, {
           method: "POST",
           body: JSON.stringify(dados)
         });
-
-        if (!resposta.ok) throw new Error("erro");
-
-        mostrarMensagem("✅ Enviado!", "sucesso");
+        if (!resposta.ok) throw new Error("Falha HTTP no envio");
+        const retorno = await resposta.json();
+        if (!retorno || retorno.sucesso !== true) {
+          throw new Error((retorno && retorno.erro) || "Servidor não confirmou o recebimento");
+        }
+        mostrarMensagem(retorno.duplicado ? "✅ Já estava registrado; sem duplicar!" : "✅ Enviado!", "sucesso");
       } catch (e) {
-        registrosPendentes.push(dados);
-        salvarPendentes();
-        atualizarBotaoSync();
-        mostrarMensagem("📴 Salvo offline", "erro");
+        // Mesmo se o servidor tiver gravado e a confirmação se perder, o ID
+        // permanece igual e o Apps Script reconhecerá a repetição na próxima tentativa.
+        adicionarPendente(dados);
+        mostrarMensagem("📴 Envio pendente — será sincronizado", "erro");
       }
     }
 
     async function sincronizarPendentes() {
+      if (sincronizacaoEmAndamento) return;
+
       if (registrosPendentes.length === 0) {
         mostrarMensagem("Nada pendente", "sucesso");
+        atualizarBotaoSync();
         return;
       }
 
@@ -350,26 +396,63 @@
         return;
       }
 
-      let enviados = [];
+      sincronizacaoEmAndamento = true;
+      const btn = document.getElementById("btnSync");
+      btn.disabled = true;
+      btn.innerText = "⏳ Enviando...";
+      let enviadosNestaRodada = 0;
+      let falhou = false;
 
-      for (let r of registrosPendentes) {
-        try {
-          const res = await fetch(URL_SCRIPT, {
-            method: "POST",
-            body: JSON.stringify(r)
-          });
+      try {
+        // Trabalha em pequenos lotes e confirma/salva cada item individualmente.
+        // Se a conexão cair, somente o item não confirmado e os seguintes ficam na fila.
+        while (registrosPendentes.length > 0) {
+          if (!navigator.onLine) {
+            falhou = true;
+            break;
+          }
 
-          if (res.ok) enviados.push(r);
-        } catch (e) {}
+          const lote = registrosPendentes.slice(0, TAMANHO_LOTE);
+          for (const item of lote) {
+            if (!navigator.onLine) {
+              falhou = true;
+              break;
+            }
+            try {
+              if (!item.id) item.id = gerarIdRegistro();
+              const res = await fetch(URL_SCRIPT, {
+                method: "POST",
+                body: JSON.stringify(item)
+              });
+              if (!res.ok) throw new Error("Falha HTTP no envio");
+              const retorno = await res.json();
+              if (!retorno || retorno.sucesso !== true) {
+                throw new Error((retorno && retorno.erro) || "Servidor não confirmou o recebimento");
+              }
+
+              // Remove e persiste imediatamente após a confirmação do servidor.
+              registrosPendentes = registrosPendentes.filter(r => r.id !== item.id);
+              salvarPendentes();
+              atualizarBotaoSync();
+              enviadosNestaRodada++;
+              await aguardar(INTERVALO_ENVIO_MS);
+            } catch (e) {
+              falhou = true;
+              break;
+            }
+          }
+          if (falhou) break;
+        }
+      } finally {
+        sincronizacaoEmAndamento = false;
+        atualizarBotaoSync();
       }
 
-      registrosPendentes =
-        registrosPendentes.filter(r => !enviados.includes(r));
-
-      salvarPendentes();
-      atualizarBotaoSync();
-
-      mostrarMensagem(`${enviados.length} sincronizados`, "sucesso");
+      if (falhou || registrosPendentes.length > 0) {
+        mostrarMensagem(`${enviadosNestaRodada} enviados; ${registrosPendentes.length} ainda pendentes`, "erro");
+      } else {
+        mostrarMensagem(`${enviadosNestaRodada} sincronizados com sucesso`, "sucesso");
+      }
     }
 
     function atualizarBotaoSync() {
@@ -408,6 +491,7 @@
       let valorCalculado = horasTrabalhadas * valorHora;
 
       let dados = {
+        id: gerarIdRegistro(),
         data: document.getElementById("data").value,
         operador: document.getElementById("operador").value,
         associado: document.getElementById("associado").value,
@@ -438,9 +522,7 @@
       if (navigator.onLine) {
         enviarParaGoogleSheets(dados);
       } else {
-        registrosPendentes.push(dados);
-        salvarPendentes();
-        atualizarBotaoSync();
+        adicionarPendente(dados);
         mostrarMensagem("📴 Salvo offline", "erro");
       }
 
@@ -532,6 +614,10 @@
       a.click();
       URL.revokeObjectURL(a.href)
     }
+
+    // Atualiza o indicador da fila ao abrir o aplicativo.
+    atualizarBotaoSync();
+    atualizarTabela();
 
   </script>
   <script>
