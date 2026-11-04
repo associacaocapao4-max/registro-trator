@@ -270,7 +270,7 @@
       <button onclick="registrar()">Registrar</button>
       <button class="btn-pdf" onclick="exportarPDF()">EXPORTAR PDF</button>
       <button id="btnSync" class="btn-sync" onclick="sincronizarPendentes()" disabled>
-        🔄 Sincronizar
+        📤 ENVIAR PENDENTES
       </button>
       <button class="btn-apagar" onclick="limparTodos()">Apagar Tudo</button>
     </div>
@@ -330,7 +330,7 @@
     }
 
     let sincronizacaoEmAndamento = false;
-    const TAMANHO_LOTE = 4;
+    const TAMANHO_LOTE = 10;
     const INTERVALO_ENVIO_MS = 350;
 
     function aguardar(ms) {
@@ -475,10 +475,10 @@
 
       if (registrosPendentes.length > 0) {
         btn.disabled = false;
-        btn.innerText = `🔄 (${registrosPendentes.length})`;
+        btn.innerText = `📤 ENVIAR PENDENTES (${registrosPendentes.length})`;
       } else {
         btn.disabled = true;
-        btn.innerText = "OK";
+        btn.innerText = "✅ TUDO ENVIADO";
       }
     }
 
