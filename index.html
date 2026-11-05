@@ -335,7 +335,7 @@
     const TAMANHO_LOTE = 10;
     // O próprio tempo de resposta do servidor já controla o ritmo.
     // Uma pausa curta evita rajadas sem atrasar desnecessariamente a fila.
-    const INTERVALO_ENVIO_MS = 100;
+    const INTERVALO_ENVIO_MS = 0; // Lotes seguem assim que o servidor confirma o anterior.
     const TEMPO_LIMITE_ENVIO_MS = 20000;
     const MAX_TENTATIVAS_ENVIO = 3;
 
@@ -403,8 +403,9 @@
       }
     }
 
-    async function enviarPendenteComSeguranca(item) {
+    async function enviarLoteComSeguranca(lote) {
       let ultimoErro = null;
+      const idsEsperados = lote.map(item => String(item.id));
 
       for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_ENVIO; tentativa++) {
         if (!navigator.onLine) {
@@ -412,28 +413,43 @@
         }
 
         const controlador = new AbortController();
-        const limite = setTimeout(() => controlador.abort(), TEMPO_LIMITE_ENVIO_MS);
+        const limite = setTimeout(() => controlador.abort(), 30000);
 
         try {
+          // Uma única requisição transporta até 10 apontamentos.
           const resposta = await fetch(URL_SCRIPT, {
             method: "POST",
-            body: JSON.stringify(item),
+            body: JSON.stringify({ registros: lote }),
             signal: controlador.signal
           });
 
           if (!resposta.ok) throw new Error("Falha HTTP " + resposta.status);
+
           const retorno = await resposta.json();
           if (!retorno || retorno.sucesso !== true) {
-            throw new Error((retorno && retorno.erro) || "Servidor não confirmou o recebimento");
+            throw new Error((retorno && retorno.erro) || "Servidor não confirmou o lote");
           }
+
+          // O Apps Script novo devolve os IDs gravados e os já existentes.
+          // Só considera concluído quando TODOS os IDs do lote forem confirmados.
+          const idsConfirmados = new Set([
+            ...(Array.isArray(retorno.idsGravados) ? retorno.idsGravados : []),
+            ...(Array.isArray(retorno.idsDuplicados) ? retorno.idsDuplicados : [])
+          ].map(String));
+
+          const faltantes = idsEsperados.filter(id => !idsConfirmados.has(id));
+          if (faltantes.length > 0) {
+            throw new Error("O servidor não confirmou " + faltantes.length + " apontamento(s) do lote");
+          }
+
           return retorno;
+
         } catch (erro) {
           ultimoErro = erro.name === "AbortError"
-            ? new Error("Tempo limite de 20 segundos excedido")
+            ? new Error("Tempo limite de 30 segundos excedido no lote")
             : erro;
 
-          // O mesmo ID é usado em todas as tentativas. Se o servidor gravou,
-          // mas a resposta se perdeu, a próxima tentativa não cria duplicata.
+          // Reenvia o mesmo lote com os mesmos IDs. O servidor bloqueia duplicatas.
           if (tentativa < MAX_TENTATIVAS_ENVIO) {
             await aguardar(tentativa * 1000);
           }
@@ -442,7 +458,7 @@
         }
       }
 
-      throw ultimoErro || new Error("Não foi possível confirmar o envio");
+      throw ultimoErro || new Error("Não foi possível confirmar o lote");
     }
 
     async function sincronizarPendentes() {
@@ -462,45 +478,40 @@
       sincronizacaoEmAndamento = true;
       totalEnvioAtual = registrosPendentes.length;
       enviadosEnvioAtual = 0;
-      const btn = document.getElementById("btnSync");
       atualizarBotaoSync();
       let erroEnvio = null;
 
       try {
-        // Envio sequencial: preserva a segurança da gravação no Apps Script.
-        // Cada registro só sai da fila depois da confirmação do servidor.
+        // Cada chamada envia até 10 registros juntos. Continua automaticamente
+        // até esvaziar a fila, sem exigir novos cliques.
         while (registrosPendentes.length > 0) {
           if (!navigator.onLine) {
             erroEnvio = new Error("Conexão perdida");
             break;
           }
 
-          // Organiza a fila em lotes de até 10, enviados em sequência segura.
           const lote = registrosPendentes.slice(0, TAMANHO_LOTE);
-          for (const item of lote) {
-            if (!navigator.onLine) {
-              erroEnvio = new Error("Conexão perdida");
-              break;
-            }
+          lote.forEach(item => {
             if (!item.id) item.id = gerarIdRegistro();
+          });
+          salvarPendentes();
 
-            try {
-              await enviarPendenteComSeguranca(item);
+          try {
+            await enviarLoteComSeguranca(lote);
 
-              // Remove somente o item confirmado, sem apagar os demais pendentes.
-              registrosPendentes = registrosPendentes.filter(r => r.id !== item.id);
-              salvarPendentes();
-              enviadosEnvioAtual++;
-              totalEnvioAtual = Math.max(totalEnvioAtual, enviadosEnvioAtual + registrosPendentes.length);
-              atualizarBotaoSync();
+            const idsDoLote = new Set(lote.map(item => String(item.id)));
+            registrosPendentes = registrosPendentes.filter(
+              item => !idsDoLote.has(String(item.id))
+            );
 
-              if (INTERVALO_ENVIO_MS > 0) await aguardar(INTERVALO_ENVIO_MS);
-            } catch (erro) {
-              erroEnvio = erro;
-              break;
-            }
+            enviadosEnvioAtual += lote.length;
+            salvarPendentes();
+            atualizarBotaoSync();
+
+          } catch (erro) {
+            erroEnvio = erro;
+            break;
           }
-          if (erroEnvio) break;
         }
       } finally {
         sincronizacaoEmAndamento = false;
@@ -509,7 +520,10 @@
 
       if (erroEnvio || registrosPendentes.length > 0) {
         const detalhe = erroEnvio ? ` (${erroEnvio.message})` : "";
-        mostrarMensagem(`${enviadosEnvioAtual} enviados; ${registrosPendentes.length} ainda pendentes${detalhe}. Toque para continuar.`, "erro");
+        mostrarMensagem(
+          `${enviadosEnvioAtual} enviados; ${registrosPendentes.length} ainda pendentes${detalhe}. O envio será retomado automaticamente.`,
+          "erro"
+        );
       } else {
         mostrarMensagem(`${enviadosEnvioAtual} sincronizados com sucesso`, "sucesso");
       }
